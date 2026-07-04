@@ -80,6 +80,18 @@ async def synthesize(text: str) -> str | None:
         return None  # browser falls back to speechSynthesis
 
 
+def transcribe_pcm(pcm16: bytes) -> str | None:
+    """Speech-to-text on 16 kHz mono 16-bit PCM from the browser mic."""
+    import speech_recognition as sr
+
+    recognizer = sr.Recognizer()
+    audio = sr.AudioData(pcm16, 16_000, 2)
+    try:
+        return recognizer.recognize_google(audio)
+    except Exception:
+        return None
+
+
 @app.get("/")
 async def index():
     return FileResponse(ROOT / "static" / "index.html")
@@ -102,14 +114,7 @@ async def ws_endpoint(ws: WebSocket):
                 "audio": await synthesize(greeting),
             })
 
-            while True:
-                msg = await ws.receive_json()
-                if msg.get("type") != "user_text":
-                    continue
-                user_text = str(msg.get("text", "")).strip()
-                if not user_text:
-                    continue
-
+            async def run_query(user_text: str) -> None:
                 await ws.send_json({"type": "state", "value": "thinking"})
                 reply_parts: list[str] = []
                 try:
@@ -139,6 +144,30 @@ async def ws_endpoint(ws: WebSocket):
                     "text": reply,
                     "audio": await synthesize(reply),
                 })
+
+            while True:
+                msg = await ws.receive_json()
+
+                if msg.get("type") == "user_text":
+                    user_text = str(msg.get("text", "")).strip()
+                    if user_text:
+                        await run_query(user_text)
+
+                elif msg.get("type") == "user_audio":
+                    # raw 16 kHz mono pcm16 from the browser mic, base64
+                    await ws.send_json({"type": "state", "value": "thinking"})
+                    try:
+                        pcm = base64.b64decode(msg.get("pcm16", ""))
+                    except Exception:
+                        pcm = b""
+                    text = None
+                    if len(pcm) > 8000:  # ignore sub-quarter-second blips
+                        text = await asyncio.to_thread(transcribe_pcm, pcm)
+                    await ws.send_json({"type": "transcript", "text": text or ""})
+                    if text:
+                        await run_query(text)
+                    else:
+                        await ws.send_json({"type": "state", "value": "idle"})
     except WebSocketDisconnect:
         pass
 

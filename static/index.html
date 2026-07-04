@@ -189,7 +189,7 @@
 <script>
   const $ = id => document.getElementById(id);
   const statusEl = $("status"), chat = $("chat"), chip = $("toolchip");
-  let ws, recognizing = false, recognition = null, currentAudio = null;
+  let ws, currentAudio = null;
 
   const STATUS_TEXT = {
     idle: "standing by", listening: "listening…", thinking: "thinking…",
@@ -225,6 +225,10 @@
       const m = JSON.parse(ev.data);
       if (m.type === "state") setState(m.value, m.label);
       else if (m.type === "reply") { addMsg("ROCKY", m.text); speak(m.text, m.audio); }
+      else if (m.type === "transcript") {
+        if (m.text) addMsg("YOU", m.text);
+        else statusEl.textContent = "couldn't understand — try again";
+      }
     };
   }
   connect();
@@ -264,41 +268,75 @@
     if ($("autolisten").checked) startListening();
   }
 
-  /* ---------------- voice in (browser STT) ---------------- */
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (SR) {
-    recognition = new SR();
-    recognition.lang = "en-US";
-    recognition.interimResults = true;
-    recognition.onresult = ev => {
-      let interim = "", final = "";
-      for (const r of ev.results) (r.isFinal ? final += r[0].transcript
-                                             : interim += r[0].transcript);
-      let el = $("interim");
-      if (!el) { el = document.createElement("div"); el.id = "interim"; chat.appendChild(el); }
-      el.textContent = interim ? "… " + interim : "";
-      if (final) { el.remove(); sendText(final); }
-      chat.scrollTop = chat.scrollHeight;
+  /* ------- voice in: raw mic capture -> server transcribes ------- */
+  let recording = false, audioCtx = null, mediaStream = null, procNode = null, cap = null;
+
+  async function startListening() {
+    if (recording) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      statusEl.textContent = "microphone not supported in this browser"; return;
+    }
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      statusEl.textContent = "mic blocked — click the padlock icon and allow the microphone";
+      return;
+    }
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = audioCtx.createMediaStreamSource(mediaStream);
+    procNode = audioCtx.createScriptProcessor(4096, 1, 1);
+    const mute = audioCtx.createGain(); mute.gain.value = 0;   // avoid echo
+    cap = { chunks: [], started: false, silentMs: 0, totalMs: 0 };
+    procNode.onaudioprocess = e => {
+      const data = e.inputBuffer.getChannelData(0);
+      cap.chunks.push(new Float32Array(data));
+      const blockMs = data.length / audioCtx.sampleRate * 1000;
+      cap.totalMs += blockMs;
+      let sum = 0; for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
+      if (Math.sqrt(sum / data.length) > 0.015) { cap.started = true; cap.silentMs = 0; }
+      else if (cap.started) cap.silentMs += blockMs;
+      if ((cap.started && cap.silentMs > 1300) || cap.totalMs > 20000) stopListening(true);
     };
-    recognition.onend = () => { recognizing = false;
-      if (document.body.dataset.state === "listening") setState("idle"); };
-    recognition.onerror = () => { recognizing = false; setState("idle"); };
-  } else {
-    $("micbtn").disabled = true;
-    $("micbtn").title = "Speech recognition needs Edge or Chrome";
+    src.connect(procNode); procNode.connect(mute); mute.connect(audioCtx.destination);
+    recording = true; setState("listening");
   }
 
-  function startListening() {
-    if (!recognition || recognizing) return;
-    try { recognition.start(); recognizing = true; setState("listening"); } catch (e) {}
+  function stopListening(send = false) {
+    if (!recording) return;
+    recording = false;
+    const rate = audioCtx ? audioCtx.sampleRate : 48000;
+    try { if (procNode) procNode.disconnect(); } catch (e) {}
+    try { if (mediaStream) mediaStream.getTracks().forEach(t => t.stop()); } catch (e) {}
+    try { if (audioCtx) audioCtx.close(); } catch (e) {}
+    const c = cap; cap = null; procNode = null; mediaStream = null; audioCtx = null;
+    if (send && c && c.started && ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: "user_audio", pcm16: toPCM16(c.chunks, rate) }));
+      setState("thinking");
+    } else {
+      setState("idle");
+      if (send) statusEl.textContent = "didn't catch anything — try again";
+    }
   }
-  function stopListening() {
-    if (recognition && recognizing) { recognition.stop(); recognizing = false; }
+
+  function toPCM16(chunks, inRate) {
+    let len = 0; chunks.forEach(c => len += c.length);
+    const all = new Float32Array(len); let o = 0;
+    chunks.forEach(c => { all.set(c, o); o += c.length; });
+    const ratio = inRate / 16000, outLen = Math.floor(all.length / ratio);
+    const out = new Int16Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      const s = Math.max(-1, Math.min(1, all[Math.floor(i * ratio)]));
+      out[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    const bytes = new Uint8Array(out.buffer);
+    let bin = "";
+    for (let i = 0; i < bytes.length; i += 32768)
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 32768));
+    return btoa(bin);
   }
 
   /* ---------------- controls ---------------- */
-  $("micbtn").onclick = () => recognizing ? (stopListening(), setState("idle"))
-                                          : startListening();
+  $("micbtn").onclick = () => recording ? stopListening(true) : startListening();
   $("sendbtn").onclick = () => { sendText($("textin").value); $("textin").value = ""; };
   $("textin").addEventListener("keydown", e => {
     if (e.key === "Enter") { sendText($("textin").value); $("textin").value = ""; }
