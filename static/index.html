@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ROCKY AI</title>
+<style>
+  :root {
+    --glow: #22d3ee;
+    --glow-dim: rgba(34, 211, 238, .35);
+    --bg: #050b14;
+    --panel: rgba(13, 27, 42, .75);
+    --text: #d7e9f7;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: radial-gradient(ellipse at 50% 30%, #0b1d33 0%, var(--bg) 65%);
+    min-height: 100vh; color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    overflow-x: hidden;
+  }
+  body::before {                     /* faint grid */
+    content: ""; position: fixed; inset: 0; pointer-events: none;
+    background-image:
+      linear-gradient(rgba(34,211,238,.05) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(34,211,238,.05) 1px, transparent 1px);
+    background-size: 44px 44px;
+  }
+  h1 {
+    margin-top: 22px; font-size: 1.5rem; letter-spacing: .45em;
+    color: var(--glow); text-shadow: 0 0 18px var(--glow-dim);
+    font-weight: 300;
+  }
+  #status {
+    margin-top: 4px; font-size: .8rem; letter-spacing: .25em;
+    text-transform: uppercase; color: #7fb3cc; min-height: 1.2em;
+  }
+  #toolchip {
+    margin-top: 4px; font-size: .7rem; color: var(--glow);
+    border: 1px solid var(--glow-dim); border-radius: 999px;
+    padding: 2px 12px; opacity: 0; transition: opacity .3s;
+  }
+  body[data-state="working"] #toolchip { opacity: 1; }
+
+  /* ---------------- robot stage ---------------- */
+  #stage { position: relative; width: 340px; height: 340px; margin-top: 8px;
+           display: flex; align-items: center; justify-content: center; }
+
+  .ring { position: absolute; border-radius: 50%; border: 1.5px solid var(--glow-dim);
+          opacity: 0; }
+  .r1 { width: 250px; height: 250px; }
+  .r2 { width: 295px; height: 295px; }
+  .r3 { width: 340px; height: 340px; }
+  body[data-state="listening"] .ring { animation: pulse 1.6s ease-out infinite; opacity: 1; }
+  body[data-state="listening"] .r2 { animation-delay: .35s; }
+  body[data-state="listening"] .r3 { animation-delay: .7s; }
+  @keyframes pulse {
+    0%   { transform: scale(.9); opacity: .8; }
+    100% { transform: scale(1.12); opacity: 0; }
+  }
+
+  #orbit { position: absolute; width: 270px; height: 270px; border-radius: 50%;
+           border: 1.5px dashed var(--glow-dim); opacity: 0; }
+  body[data-state="thinking"] #orbit, body[data-state="working"] #orbit {
+    opacity: 1; animation: spin 3.2s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #robot { animation: float 4.5s ease-in-out infinite; }
+  @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+
+  /* eyes */
+  .eye { fill: var(--glow); filter: drop-shadow(0 0 6px var(--glow)); }
+  .pupilgrp { animation: blink 5s infinite; transform-origin: center; }
+  @keyframes blink { 0%, 94%, 100% { transform: scaleY(1); } 96% { transform: scaleY(.08); } }
+  body[data-state="thinking"] .pupilgrp,
+  body[data-state="working"] .pupilgrp { animation: scan 1.4s ease-in-out infinite; }
+  @keyframes scan { 0%,100% { transform: translateX(-7px); } 50% { transform: translateX(7px); } }
+
+  /* mouth equalizer bars */
+  .bar { fill: var(--glow); opacity: .85; transform-origin: center 191px; transform: scaleY(.25);
+         transition: transform .2s; }
+  body[data-state="speaking"] .bar { animation: talk .55s ease-in-out infinite; }
+  body[data-state="speaking"] .b1 { animation-delay: 0s; }
+  body[data-state="speaking"] .b2 { animation-delay: .12s; }
+  body[data-state="speaking"] .b3 { animation-delay: .24s; }
+  body[data-state="speaking"] .b4 { animation-delay: .08s; }
+  body[data-state="speaking"] .b5 { animation-delay: .18s; }
+  @keyframes talk {
+    0%,100% { transform: scaleY(.25); }
+    50%     { transform: scaleY(1); }
+  }
+
+  .antenna-light { fill: #f43f5e; }
+  body[data-state="listening"] .antenna-light,
+  body[data-state="speaking"] .antenna-light {
+    fill: var(--glow); filter: drop-shadow(0 0 7px var(--glow));
+    animation: throb 1s infinite;
+  }
+  @keyframes throb { 50% { opacity: .4; } }
+
+  /* ---------------- chat + controls ---------------- */
+  #chat {
+    width: min(680px, 92vw); height: 180px; overflow-y: auto;
+    background: var(--panel); border: 1px solid rgba(34,211,238,.18);
+    border-radius: 12px; padding: 14px; font-size: .9rem; line-height: 1.45;
+    backdrop-filter: blur(6px);
+  }
+  .msg { margin-bottom: 8px; }
+  .msg b { color: var(--glow); font-weight: 600; }
+  .msg.you b { color: #f0abfc; }
+  #interim { color: #6b8fa3; font-style: italic; }
+
+  #controls { display: flex; gap: 10px; align-items: center;
+              width: min(680px, 92vw); margin: 14px 0 30px; }
+  #micbtn {
+    width: 58px; height: 58px; border-radius: 50%; border: 1.5px solid var(--glow-dim);
+    background: rgba(34,211,238,.08); color: var(--glow); font-size: 24px;
+    cursor: pointer; transition: all .25s; flex-shrink: 0;
+  }
+  #micbtn:hover { background: rgba(34,211,238,.2); }
+  body[data-state="listening"] #micbtn {
+    background: var(--glow); color: #04222b;
+    box-shadow: 0 0 26px var(--glow-dim), 0 0 60px var(--glow-dim);
+  }
+  #textin {
+    flex: 1; padding: 14px 16px; border-radius: 999px;
+    border: 1px solid rgba(34,211,238,.25); background: var(--panel);
+    color: var(--text); font-size: .95rem; outline: none;
+  }
+  #textin:focus { border-color: var(--glow); }
+  #sendbtn {
+    padding: 12px 22px; border-radius: 999px; border: 1px solid var(--glow-dim);
+    background: rgba(34,211,238,.12); color: var(--glow); cursor: pointer;
+    font-size: .9rem; letter-spacing: .06em;
+  }
+  #sendbtn:hover { background: rgba(34,211,238,.25); }
+  #autolabel { font-size: .72rem; color: #7fb3cc; display: flex; gap: 5px;
+               align-items: center; white-space: nowrap; cursor: pointer; }
+</style>
+</head>
+<body data-state="idle">
+  <h1>R O C K Y &nbsp; A I</h1>
+  <div id="status">connecting…</div>
+  <div id="toolchip"></div>
+
+  <div id="stage">
+    <div class="ring r1"></div><div class="ring r2"></div><div class="ring r3"></div>
+    <div id="orbit"></div>
+    <svg id="robot" width="230" height="250" viewBox="0 0 230 250">
+      <!-- antenna -->
+      <line x1="115" y1="38" x2="115" y2="16" stroke="#2b6d80" stroke-width="4"/>
+      <circle class="antenna-light" cx="115" cy="12" r="7"/>
+      <!-- ears -->
+      <rect x="8"   y="105" width="14" height="46" rx="7" fill="#123246" stroke="#2b6d80" stroke-width="2"/>
+      <rect x="208" y="105" width="14" height="46" rx="7" fill="#123246" stroke="#2b6d80" stroke-width="2"/>
+      <!-- head -->
+      <rect x="25" y="40" width="180" height="175" rx="52"
+            fill="#0d2236" stroke="#2b6d80" stroke-width="3"/>
+      <!-- visor -->
+      <rect x="45" y="78" width="140" height="66" rx="33"
+            fill="#071523" stroke="rgba(34,211,238,.35)" stroke-width="2"/>
+      <!-- eyes -->
+      <g class="pupilgrp">
+        <ellipse class="eye" cx="87"  cy="111" rx="13" ry="16"/>
+        <ellipse class="eye" cx="143" cy="111" rx="13" ry="16"/>
+      </g>
+      <!-- mouth equalizer -->
+      <g>
+        <rect class="bar b1" x="77"  y="171" width="9" height="40" rx="4.5"/>
+        <rect class="bar b2" x="94"  y="171" width="9" height="40" rx="4.5"/>
+        <rect class="bar b3" x="111" y="171" width="9" height="40" rx="4.5"/>
+        <rect class="bar b4" x="128" y="171" width="9" height="40" rx="4.5"/>
+        <rect class="bar b5" x="145" y="171" width="9" height="40" rx="4.5"/>
+      </g>
+    </svg>
+  </div>
+
+  <div id="chat"></div>
+
+  <div id="controls">
+    <button id="micbtn" title="talk to Rocky">&#127908;</button>
+    <input id="textin" placeholder="or type a command for Rocky…" autocomplete="off">
+    <button id="sendbtn">SEND</button>
+    <label id="autolabel"><input type="checkbox" id="autolisten"> auto-listen</label>
+  </div>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const statusEl = $("status"), chat = $("chat"), chip = $("toolchip");
+  let ws, recognizing = false, recognition = null, currentAudio = null;
+
+  const STATUS_TEXT = {
+    idle: "standing by", listening: "listening…", thinking: "thinking…",
+    working: "working…", speaking: "speaking",
+  };
+
+  function setState(s, label) {
+    document.body.dataset.state = s;
+    statusEl.textContent = STATUS_TEXT[s] || s;
+    if (s === "working" && label) chip.textContent = "using " + label;
+  }
+
+  function addMsg(who, text) {
+    const div = document.createElement("div");
+    div.className = "msg" + (who === "YOU" ? " you" : "");
+    div.innerHTML = `<b>${who}:</b> `;
+    div.appendChild(document.createTextNode(text));
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  /* ---------------- websocket ---------------- */
+  let pending = null;
+  function connect() {
+    ws = new WebSocket(`ws://${location.host}/ws`);
+    ws.onopen = () => {
+      setState("idle");
+      if (pending) { const t = pending; pending = null; sendText(t); }
+    };
+    ws.onclose = () => { setState("idle"); statusEl.textContent = "disconnected — retrying…";
+                         setTimeout(connect, 2000); };
+    ws.onmessage = ev => {
+      const m = JSON.parse(ev.data);
+      if (m.type === "state") setState(m.value, m.label);
+      else if (m.type === "reply") { addMsg("ROCKY", m.text); speak(m.text, m.audio); }
+    };
+  }
+  connect();
+
+  function sendText(text) {
+    text = text.trim();
+    if (!text) return;
+    if (!ws || ws.readyState !== 1) {       // not connected yet — hold it
+      pending = text;
+      statusEl.textContent = "connecting — message queued…";
+      return;
+    }
+    stopListening();
+    if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+    addMsg("YOU", text);
+    ws.send(JSON.stringify({ type: "user_text", text }));
+    setState("thinking");
+  }
+
+  /* ---------------- voice out ---------------- */
+  function speak(text, b64) {
+    setState("speaking");
+    const done = () => { setState("idle"); currentAudio = null; maybeAutoListen(); };
+    if (b64) {
+      currentAudio = new Audio("data:audio/mp3;base64," + b64);
+      currentAudio.onended = done;
+      currentAudio.onerror = done;
+      currentAudio.play().catch(done);
+    } else if (window.speechSynthesis) {
+      const u = new SpeechSynthesisUtterance(text);
+      u.onend = done; u.onerror = done;
+      speechSynthesis.speak(u);
+    } else done();
+  }
+
+  function maybeAutoListen() {
+    if ($("autolisten").checked) startListening();
+  }
+
+  /* ---------------- voice in (browser STT) ---------------- */
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SR) {
+    recognition = new SR();
+    recognition.lang = "en-US";
+    recognition.interimResults = true;
+    recognition.onresult = ev => {
+      let interim = "", final = "";
+      for (const r of ev.results) (r.isFinal ? final += r[0].transcript
+                                             : interim += r[0].transcript);
+      let el = $("interim");
+      if (!el) { el = document.createElement("div"); el.id = "interim"; chat.appendChild(el); }
+      el.textContent = interim ? "… " + interim : "";
+      if (final) { el.remove(); sendText(final); }
+      chat.scrollTop = chat.scrollHeight;
+    };
+    recognition.onend = () => { recognizing = false;
+      if (document.body.dataset.state === "listening") setState("idle"); };
+    recognition.onerror = () => { recognizing = false; setState("idle"); };
+  } else {
+    $("micbtn").disabled = true;
+    $("micbtn").title = "Speech recognition needs Edge or Chrome";
+  }
+
+  function startListening() {
+    if (!recognition || recognizing) return;
+    try { recognition.start(); recognizing = true; setState("listening"); } catch (e) {}
+  }
+  function stopListening() {
+    if (recognition && recognizing) { recognition.stop(); recognizing = false; }
+  }
+
+  /* ---------------- controls ---------------- */
+  $("micbtn").onclick = () => recognizing ? (stopListening(), setState("idle"))
+                                          : startListening();
+  $("sendbtn").onclick = () => { sendText($("textin").value); $("textin").value = ""; };
+  $("textin").addEventListener("keydown", e => {
+    if (e.key === "Enter") { sendText($("textin").value); $("textin").value = ""; }
+  });
+</script>
+</body>
+</html>

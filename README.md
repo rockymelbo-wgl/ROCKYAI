@@ -27,6 +27,21 @@ and search the web.
 
 ## Run
 
+### Web UI (animated robot) 🤖
+
+```
+python webui.py
+```
+
+Open **http://localhost:8765** in Edge or Chrome. The robot face animates as
+Rocky listens (pulsing rings), thinks (scanning eyes + orbit ring), works
+(tool chip), and speaks (equalizer mouth). Click the mic button and talk, or
+type in the box. Turn on **auto-listen** for a hands-free conversation loop.
+
+> Mic input uses the browser's built-in speech recognition (Edge/Chrome).
+
+### Terminal mode
+
 ```
 python rocky.py           # voice mode: press Enter, then speak
 python rocky.py --text    # type instead of talking
